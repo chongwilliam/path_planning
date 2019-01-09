@@ -3,23 +3,25 @@ import matplotlib.pyplot as plt
 from scipy import interpolate
 
 # global parameters
-kj = 1.0
-kt = 0.1
-kd = 0.1
-ks_d = 0.1
+kj = 0.1  # position weight
+kt = 0.1  # velocity weight
+kd = 1.0  # ending position weight (lateral)
+ks_d = 1.0  # ending position weight (longitudinal)
+
+radius = 1.0  # robot radius for obstacles
 
 sd = 1.0  # desired speed (m/s)
 
 ds_min = -0.1  # min delta speed
 ds_max = 0.1
-d_min = -1.0  # assume center lane with 3 lanes
-d_max = 1.0  # 5 meters max road width
-t_min = 1  # seconds
-t_max = 2
+d_min = -2.0  # assume center lane with 3 lanes
+d_max = 2.0  # 5 meters max road width
+t_min = 1.0  # seconds
+t_max = 2.0
 
-s_samples = 50  # samples within range
-d_samples = 50
-t_samples = 50
+s_samples = 10  # samples within range
+d_samples = 10
+t_samples = 10
 
 # max checks
 max_speed = sd*5
@@ -63,7 +65,7 @@ class quartic_poly:
     def calc_point(self, t):
         return self.x0 + self.x1*t + self.x2*t**2 + self.x3*t**3 + self.x4*t**4
 
-    def calc_all_points(self, T, n_pts=50):  # overloaded for jerk calc
+    def calc_all_points(self, T, n_pts=10):  # overloaded for jerk calc
         t = np.linspace(0, T, n_pts)
         points = self.x0 + self.x1*t + self.x2*t**2 + self.x3*t**3 + self.x4*t**4
         return t, points
@@ -120,7 +122,7 @@ class quintic_poly:
     def calc_point(self, t):
         return self.x0 + self.x1*t + self.x2*t**2 + self.x3*t**3 + self.x4*t**4 + self.x5*t**5
 
-    def calc_all_points(self, T, n_pts=50):  # overloaded for jerk calc
+    def calc_all_points(self, T, n_pts=10):
         t = np.linspace(0, T, n_pts)
         points = self.x0 + self.x1*t + self.x2*t**2 + self.x3*t**3 + self.x4*t**4 + self.x5*t**5
         return t, points
@@ -143,60 +145,73 @@ def calc_path(fren_path, T, opts):
     if (opts == 'lat_high'):
         # lateral movement (high speed trajectory)
         t, x = fren_path.third_der_jerk(T)
-        lat_high_jerk = abs(np.trapz(x, t))
+        lat_high_jerk = np.trapz(x**2, t)
         lat_high_cost = kj*lat_high_jerk + kt*T + kd*fren_path.points[-1]**2
         return lat_high_cost
     elif (opts == 'lat_low'):
         # lateral movement (low speed trajectory)
         s, x = fren_path.third_der_jerk(S)
-        lat_low_jerk = abs(np.trapz(x, s))
+        lat_low_jerk = np.trapz(x**2, s)
         lat_low_cost = kj*lat_low_jerk + kt*S + kd*fren_path.points[-1]**2
         return lat_low_cost
     elif (opts == 'long'):
         # longitudinal movement (velocity keeping path follower)
         t, x = fren_path.third_der_jerk(T)
-        long_path_jerk = abs(np.trapz(x, t))
+        long_path_jerk = np.trapz(x**2, t)
         long_path_cost = kj*long_path_jerk + kt*T + ks_d*(fren_path.ve - sd)**2
         return long_path_cost
 
-def opt_path(s_start, d_start, s_end, d_end):  # s_start = [s0, v0, a0] s_end = [ve, ae] d_start = [d0, v0, a0] d_end = [de, ve, ae]
+def opt_path(s_start, d_start, s_end, d_end, wx_new, wy_new, heading, arc_len, obs):  # s_start = [s0, v0, a0] s_end = [ve, ae] d_start = [d0, v0, a0] d_end = [de, ve, ae]
     lat_paths = []
     long_paths = []
 
     # lateral variation
-    for d in np.linspace(d_min, d_max, d_samples):
+    for delta_d in np.linspace(d_min, d_max, d_samples):
         for t in np.linspace(t_min, t_max, t_samples):
-            new_lat = quintic_poly(d_start[0], d_start[1], d_start[2], d_end[0], 0.0, 0.0, t)
-            # new_lat.calc_poly(t)
-            # new_lat.cost = calc_path(new_lat, t, t/t_samples, 'lat_high')
+            new_lat = quintic_poly(d_start[0], d_start[1], d_start[2], d_end[0] + delta_d, 0.0, 0.0, t)
             new_lat.cost = calc_path(new_lat, t, 'lat_high')
             lat_paths.append(new_lat)
 
-    # longitudinal variatoin
-    for s in np.linspace(ds_min, ds_max, s_samples):
+    # longitudinal variation
+    for delta_sd in np.linspace(ds_min, ds_max, s_samples):
         for t in np.linspace(t_min, t_max, t_samples):
             # s_end[0] = s_start[0] + s_start[1]*t + 0.5*s_start[2]*t**2
-            new_long = quartic_poly(s_start[0], s_start[1], s_start[2], s_end[0], 0.0, t)
-            # new_long.calc_poly(t)
-            # new_long.cost = calc_path(new_long, t, t/t_samples, 'long')
+            new_long = quartic_poly(s_start[0], s_start[1], s_start[2], s_end[0] + delta_sd, 0.0, t)
             new_long.cost = calc_path(new_long, t, 'long')
             long_paths.append(new_long)
+
+    # obstacle, curvature check
+    ind = []
+    for i in range(len(lat_paths)):
+        x, y = fren2cart(long_paths[i].points, lat_paths[i].points, wx_new, wy_new, heading, arc_len)
+        if (path_check(x, y, obs) == True):
+            ind.append(i)
+            # lat_paths.remove[i]
+            # long_paths.remove[i]
+
+    print(ind)
 
     # compare cost
     lat_min = 1e5
     long_min = 1e5
 
     best_lat = lat_paths[0]
+    best_lat.cost = lat_min
     best_long = long_paths[0]
+    best_long.cost = long_min
 
     for i in range(len(lat_paths)):
-        if (lat_paths[i].cost <= lat_min):
-            lat_min = lat_paths[i].cost
-            best_lat = lat_paths[i]
+        if (i in ind):
+            continue
+        else:
+            if (lat_paths[i].cost <= lat_min):
+                lat_min = lat_paths[i].cost
+                best_lat = lat_paths[i]
+                print(i)
 
-        if (long_paths[i].cost <= long_min):
-            long_min = long_paths[i].cost
-            best_long = long_paths[i]
+            if (long_paths[i].cost <= long_min):
+                long_min = long_paths[i].cost
+                best_long = long_paths[i]
 
     return best_lat, best_long
 
@@ -206,7 +221,7 @@ def gen_path(x, y, opts='cubic'):  # generate path with spline options
         print('Different number of x and y points')
     else:
         tck = interpolate.splrep(x, y)
-        x_new = np.linspace(0, np.amax(x), 100)
+        x_new = np.linspace(0, np.amax(x), 1e4)
         y_new = interpolate.splev(x_new, tck)
         y_der = interpolate.splev(x_new, tck, 1)
         arc_len = np.zeros_like(x_new)
@@ -224,15 +239,27 @@ def fren2cart(s, d, x, y, heading, arc_len):  # s, d given map
         yaw = heading[idx]  # get heading angle to derive tangent and normal vectors
         x_fren[i] = x[idx] - d[i]*np.sin(yaw)
         y_fren[i] = y[idx] + d[i]*np.cos(yaw)
-        # x[i] = s[i]*np.cos(heading[i]) - d[i]*np.sin(heading[i])
-        # y[i] = s[i]*np.sin(heading[i]) + d[i]*np.cos(heading[i])
+
     return x_fren, y_fren
 
 def obs_detect(x, y, obs):
+    for i in range(len(x)):
+        for j in range(len(obs)):
+            if (np.sqrt( (obs[j][0] - x[i])**2  + (obs[j][1] - y[i])**2) <= radius):
+                return True
+                break
+        if (i == len(x) - 1):
+            return False
+
+def max_curvature(fren_path):  # implement for robots without differential drive
     pass
 
-def max_curve():
-    pass
+def path_check(x, y, obs):
+    for i in range(len(x)):
+        hit_flag = obs_detect(x, y, obs)
+        if (hit_flag):
+            return True
+            break
 
 # MAIN
 # way points
@@ -266,7 +293,7 @@ wx_new, wy_new, heading, s = gen_path(wx, wy)
 # plt.plot(x_fren, y_fren, 'r')
 # plt.show()
 
-c_speed = 1.0  # current speed [m/s]
+c_speed = 0.0  # current speed [m/s]
 c_d = 1.0  # current lateral position [m]
 c_d_d = 0.0  # current lateral speed [m/s]
 c_d_dd = 0.0  # current lateral acceleration [m/s^2]
@@ -276,23 +303,21 @@ s_start = [s0, 0.0, 0.0]
 d_start = [c_d, c_d_d, c_d_dd]
 i = 0  # counter
 t = 0  # loop timer
-# s_end = [s[1], 0.0, 0.0]
-# d_end = [0.0, 0.0, 0.0]
 
-x_path = np.zeros(1)
-y_path = np.zeros(1)
+x_path = np.zeros(0)
+y_path = np.zeros(0)
 
 plt.figure()
 
 while(1):
-    s_end = [s[i+1], 0.0, 0.0]  # desired end conditions
+    s_end = [s[i+1], sd, 0.0]  # desired end conditions
     d_end = [0.0, 0.0, 0.0]
 
-    print('start condition', s_start, d_start)
-    print('end condition', s_end, d_end)
+    # print('start condition', s_start, d_start)
+    # print('end condition', s_end, d_end)
     # plt.pause(0.1)
 
-    lat_path, long_path = opt_path(s_start, d_start, s_end, d_end)
+    lat_path, long_path = opt_path(s_start, d_start, s_end, d_end, wx_new, wy_new, heading, s, ob)
 
     # re-assign start points
     s_start = [long_path.points[-1], long_path.first_der(long_path.t), long_path.second_der(long_path.t)]
@@ -306,8 +331,13 @@ while(1):
     i = i + 1  # increase loop counter
     t = t + long_path.t  # loop timer based on the time length of the path planned
 
-    if (np.sqrt((wx_new[-1]-x_fren[-1])**2 + (wy_new[-1]-y_fren[-1])**2) <= 1e-2):
+    if (np.sqrt((wx_new[-1]-x_fren[-1])**2 + (wy_new[-1]-y_fren[-1])**2) <= 1):
         print('Reached End Goal')
+        plt.plot(x_path, y_path,'bo')
+        plt.plot(ob[:,0], ob[:,1],'x')
+        # plt.plot(x_fren, y_fren,'k-o')
+        plt.grid(True)
+        plt.pause(1e5)
         break
     elif i >= 1e4:
         print('Time Ran Out')
@@ -316,8 +346,16 @@ while(1):
     # update graph
     # print(x_path)
     # print(y_path)
-    plt.plot(x_path, y_path,'k')
-    # plt.plot(wx_new, wy_new,'b')
+    # plt.cla()
+    plt.plot(x_path, y_path,'b')
+    plt.plot(ob[:,0], ob[:,1],'x')
+    # plt.plot(x_fren, y_fren,'k-o')
     plt.grid(True)
-    plt.pause(0.1)
+    plt.pause(0.001)
     # plt.show()
+
+    # for i in range(len(x_path)):
+    #     plt.plot(x_path[i], y_path[i],'bo')
+    #     plt.pause(0.2)
+    #
+    # plt.pause(1e2)
