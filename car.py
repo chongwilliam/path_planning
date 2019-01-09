@@ -12,21 +12,22 @@ sd = 1.0  # desired speed (m/s)
 
 ds_min = -0.1  # min delta speed
 ds_max = 0.1
-d_min = -5.0  # assume center lane with 3 lanes
-d_max = 5.0  # 5 meters max road width
-t_min = 0.2  # seconds
-t_max = 1
+d_min = -1.0  # assume center lane with 3 lanes
+d_max = 1.0  # 5 meters max road width
+t_min = 1  # seconds
+t_max = 2
 
 s_samples = 50  # samples within range
 d_samples = 50
 t_samples = 50
 
+# max checks
 max_speed = sd*5
 max_accel = 0.0
 max_curvature = 1.0
 
 class quartic_poly:
-    def __init__(self, xs, vs, acs, ve, ae):  # start (pos, vel, acc), end (vel, acc)
+    def __init__(self, xs, vs, acs, ve, ae, tf):  # start (pos, vel, acc), end (vel, acc)
         self.xs = xs
         self.vs = vs
         self.acs = acs
@@ -38,57 +39,51 @@ class quartic_poly:
         self.x2 = acs/2.0
 
         self.cost = 0
-        self.t = 0
+        self.t = tf
 
         self.points = np.zeros(5)
 
-        # self.p1 = 0
-        # self.p2 = 0
-        # self.p3 = 0
-        # self.p4 = 0
-        # self.p5 = 0
+        A = np.array([[3.0*tf**2, 4.0*tf**3],
+        [6.0*tf, 12.0*tf**2]])
 
-        def calc_poly(self, tf):
-            A = np.array([3*tf**2, 4*tf**3],
-            [6*tf, 12*tf**2])
+        b = np.array([ve - self.x1 - 2.0*self.x2*tf,
+        ae - 2.0*self.x2])
 
-            b = np.array([ve - self.x1 - 2*self.x2*tf],
-            [ae - 2*self.x2])
+        x_coeff = np.linalg.solve(A,b)
+        self.x3 = x_coeff[0]
+        self.x4 = x_coeff[1]
 
-            x_coeff = np.linalg.solve(A,b)
-            self.x3 = x_coeff[0]
-            self.x4 = x_coeff[1]
+        self.t_pts, self.points = self.calc_all_points(tf)
 
-            self.t = tf
+    def calc_poly(self, tf):
 
-            self.points = np.array([calc_point(0.0), calc_point(2*tf/5.0),
-            calc_point(3*tf/5.0), calc_point(4*tf/5.0), calc_point(5*tf/5.0)])
+        self.points = np.array([self.calc_point(0.0), self.calc_point(2.0*tf/5.0),
+        self.calc_point(3.0*tf/5.0), self.calc_point(4.0*tf/5.0), self.calc_point(5.0*tf/5.0)])
 
-            # self.p1 = calc_point(0.0)  # calculate 5 points along the quintic polynomial
-            # self.p2 = calc_point(2*tf/5.0)
-            # self.p3 = calc_point(3*tf/5.0)
-            # self.p4 = calc_point(4*tf/5.0)
-            # self.p5 = calc_point(5*tf/5.0)
+    def calc_point(self, t):
+        return self.x0 + self.x1*t + self.x2*t**2 + self.x3*t**3 + self.x4*t**4
 
-        def calc_point(self, t):
-            return self.x0 + self.x1*t + self.x2*t**2 + self.x3*t**3 + self.x4*t**4
+    def calc_all_points(self, T, n_pts=50):  # overloaded for jerk calc
+        t = np.linspace(0, T, n_pts)
+        points = self.x0 + self.x1*t + self.x2*t**2 + self.x3*t**3 + self.x4*t**4
+        return t, points
 
-        def first_der(self, t):
-            return self.x1 + 2*self.x2*t + 3*self.x3*t**2 + 4*self.x4*t**3
+    def first_der(self, t):
+        return self.x1 + 2.0*self.x2*t + 3.0*self.x3*t**2 + 4.0*self.x4*t**3
 
-        def second_der(self, t):
-            return 2*self.x2 + 6*self.x3*t + 12*self.x4*t**2
+    def second_der(self, t):
+        return 2.0*self.x2 + 6.0*self.x3*t + 12.0*self.x4*t**2
 
-        def third_der(self, t):
-            return 6*self.x3 + 24*self.x4*t
+    def third_der(self, t):
+        return 6.0*self.x3 + 24.0*self.x4*t
 
-        def third_der(self, T, dt):  # overloaded for jerk calc
-            t = np.linspace(0, T, T/dt)
-            points = 6*self.x3 + 24*self.x4*t + 60*self.x5*t**2
-            return t, points
+    def third_der_jerk(self, T, n_pts=50):  # overloaded for jerk calc
+        t = np.linspace(0, T, n_pts)
+        points = 6.0*self.x3 + 24.0*self.x4*t
+        return t, points
 
 class quintic_poly:
-    def __init__(self, xs, vs, acs, xe, ve, ae):  # start (pos, vel, acc), end (pos, vel, acc)
+    def __init__(self, xs, vs, acs, xe, ve, ae, tf):  # start (pos, vel, acc), end (pos, vel, acc)
         self.xs = xs  # starting position
         self.vs = vs  # starting velocity
         self.acs = acs  # starting acceleration
@@ -101,75 +96,66 @@ class quintic_poly:
         self.x2 = acs/2.0
 
         self.cost = 0
-        self.t = 0
-        self.points = np.zeros(4)
-        # self.p1 = 0
-        # self.p2 = 0
-        # self.p3 = 0
-        # self.p4 = 0
+        self.t = tf
 
-    def calc_poly(self, tf):
-        A = np.array([tf**3, tf**4, tf**5],
-        [3*tf**2, 4*tf**3, 5*tf**4],
-        [6*tf, 12*tf**2, 20*tf**3])
+        A = np.array([[tf**3, tf**4, tf**5],
+        [3.0*tf**2, 4.0*tf**3, 5.0*tf**4],
+        [6.0*tf, 12.0*tf**2, 20.0*tf**3]])
 
-        b = np.array([xe-self.x0-self.x1*tf-self.x2*tf**2],
-        [ve-self.x1-2*self.x2*tf],
-        [ae-2*self.x2])
+        b = np.array([xe-self.x0-self.x1*tf-self.x2*tf**2,
+        ve-self.x1-2.0*self.x2*tf,
+        ae-2.0*self.x2])
 
         x_coeff = np.linalg.solve(A, b)
         self.x3 = x_coeff[0]
         self.x4 = x_coeff[1]
         self.x5 = x_coeff[2]
 
-        self.t = tf
+        self.t_pts, self.points = self.calc_all_points(tf)
 
-        self.points = np.array([calc_point(0.0), calc_point(2*tf/4.0),
-        calc_point(3*tf/4.0), calc_point(4*tf/4.0)])
-        # self.p1 = calc_point(0.0)  # calculate 4 points along the quartic polynomial
-        # self.p2 = calc_point(2*tf/4.0)
-        # self.p3 = calc_point(3*tf/4.0)
-        # self.p4 = calc_point(4*tf/4.0)
+    def calc_poly(self, tf):
+        self.points = np.array([self.calc_point(0.0), self.calc_point(2.0*tf/5.0),
+        self.calc_point(3.0*tf/5.0), self.calc_point(4.0*tf/5.0), self.calc_point(tf)])
 
     def calc_point(self, t):
         return self.x0 + self.x1*t + self.x2*t**2 + self.x3*t**3 + self.x4*t**4 + self.x5*t**5
 
-    def first_der(self, t):
-        return self.x1 + 2*self.x2*t + 3*self.x3*t**2 + 4*self.x4*t**3 + 5*self.x5*t**4
-
-    def second_der(self, t):
-        return 2*self.x2 + 6*self.x3*t + 12*self.x4*t**2 + 20*self.x5*t**3
-
-    def third_der(self,t):
-        return 6*self.x3 + 24*self.x4*t + 60*self.x5*t**2
-
-    def third_der(self, T, dt):
-        t = np.linspace(0, T, T/dt)
-        points = 6*self.x3 + 24*self.x4*t + 60*self.x5*t**2
-        return t, points
-
-    def calc_points(self, T, dt):  # overloaded for jer calc
-        t = np.linspace(0, T, T/dt)
+    def calc_all_points(self, T, n_pts=50):  # overloaded for jerk calc
+        t = np.linspace(0, T, n_pts)
         points = self.x0 + self.x1*t + self.x2*t**2 + self.x3*t**3 + self.x4*t**4 + self.x5*t**5
         return t, points
 
-def calc_path(fren_path, T, dt, opts):
+    def first_der(self, t):
+        return self.x1 + 2.0*self.x2*t + 3.0*self.x3*t**2 + 4.0*self.x4*t**3 + 5.0*self.x5*t**4
+
+    def second_der(self, t):
+        return 2.0*self.x2 + 6.0*self.x3*t + 12.0*self.x4*t**2 + 20.0*self.x5*t**3
+
+    def third_der(self,t):
+        return 6.0*self.x3 + 24.0*self.x4*t + 60.0*self.x5*t**2
+
+    def third_der_jerk(self, T, n_pts=50):
+        t = np.linspace(0, T, n_pts)
+        points = 6.0*self.x3 + 24.0*self.x4*t + 60.0*self.x5*t**2
+        return t, points
+
+def calc_path(fren_path, T, opts):
     if (opts == 'lat_high'):
         # lateral movement (high speed trajectory)
-        t, x = fren_path.third_der(T, dt)
-        lat_high_jerk = np.trapz(x, t)
-        lat_high_cost = kj*lat_high_jerk + kt*T + kd*x[-1]**2
+        t, x = fren_path.third_der_jerk(T)
+        lat_high_jerk = abs(np.trapz(x, t))
+        lat_high_cost = kj*lat_high_jerk + kt*T + kd*fren_path.points[-1]**2
         return lat_high_cost
     elif (opts == 'lat_low'):
         # lateral movement (low speed trajectory)
-        s, x = fren_path.third_der(S, ds)
-        lat_low_jerk = np.trapz(x, s)
-        lat_low_cost = kj*lat_low_jerk + kt*S + kd*x[-1]**2
+        s, x = fren_path.third_der_jerk(S)
+        lat_low_jerk = abs(np.trapz(x, s))
+        lat_low_cost = kj*lat_low_jerk + kt*S + kd*fren_path.points[-1]**2
         return lat_low_cost
     elif (opts == 'long'):
         # longitudinal movement (velocity keeping path follower)
-        t, x = fren_path.third_der(T, dt)
-        long_path_jerk = np.trapz(x, t)
+        t, x = fren_path.third_der_jerk(T)
+        long_path_jerk = abs(np.trapz(x, t))
         long_path_cost = kj*long_path_jerk + kt*T + ks_d*(fren_path.ve - sd)**2
         return long_path_cost
 
@@ -180,22 +166,28 @@ def opt_path(s_start, d_start, s_end, d_end):  # s_start = [s0, v0, a0] s_end = 
     # lateral variation
     for d in np.linspace(d_min, d_max, d_samples):
         for t in np.linspace(t_min, t_max, t_samples):
-            new_lat = quintic_poly(d_start[0], d_start[1], d_start[2], d_end[0], 0.0, 0.0)
-            new_lat.calc_poly(t)
-            new_lat.cost = calc_path(new_lat, t, t/t_samples, 'lat_high')
+            new_lat = quintic_poly(d_start[0], d_start[1], d_start[2], d_end[0], 0.0, 0.0, t)
+            # new_lat.calc_poly(t)
+            # new_lat.cost = calc_path(new_lat, t, t/t_samples, 'lat_high')
+            new_lat.cost = calc_path(new_lat, t, 'lat_high')
             lat_paths.append(new_lat)
 
+    # longitudinal variatoin
     for s in np.linspace(ds_min, ds_max, s_samples):
         for t in np.linspace(t_min, t_max, t_samples):
             # s_end[0] = s_start[0] + s_start[1]*t + 0.5*s_start[2]*t**2
-            new_long = quartic_poly(s_start[0], s_start[1], s_start[2], s_end[0], 0.0)
-            new_long.calc_poly(t)
-            new_long.cost = calc_path(new_long, t, t/t_samples, 'long')
+            new_long = quartic_poly(s_start[0], s_start[1], s_start[2], s_end[0], 0.0, t)
+            # new_long.calc_poly(t)
+            # new_long.cost = calc_path(new_long, t, t/t_samples, 'long')
+            new_long.cost = calc_path(new_long, t, 'long')
             long_paths.append(new_long)
 
     # compare cost
     lat_min = 1e5
     long_min = 1e5
+
+    best_lat = lat_paths[0]
+    best_long = long_paths[0]
 
     for i in range(len(lat_paths)):
         if (lat_paths[i].cost <= lat_min):
@@ -255,10 +247,11 @@ ob = np.array([[20.0, 10.0],
                ])
 
 wx_new, wy_new, heading, s = gen_path(wx, wy)
-d = np.zeros_like(s)
-
+# d = np.zeros_like(s)
+# print(np.size(wx_new))
+#
 # plt.figure()
-# plt.plot(wx_new, wy_new)
+# plt.plot(wx_new, wy_new,'bo')
 # for i in range(len(heading)):
 #     plt.arrow(wx_new[i], wy_new[i], 5*np.cos(heading[i]), 5*np.sin(heading[i]))
 # plt.show()
@@ -273,8 +266,8 @@ d = np.zeros_like(s)
 # plt.plot(x_fren, y_fren, 'r')
 # plt.show()
 
-c_speed = 10.0 / 3.6  # current speed [m/s]
-c_d = 2.0  # current lateral position [m]
+c_speed = 1.0  # current speed [m/s]
+c_d = 1.0  # current lateral position [m]
 c_d_d = 0.0  # current lateral speed [m/s]
 c_d_dd = 0.0  # current lateral acceleration [m/s^2]
 s0 = 0.0  # current course position
@@ -283,34 +276,37 @@ s_start = [s0, 0.0, 0.0]
 d_start = [c_d, c_d_d, c_d_dd]
 i = 0  # counter
 t = 0  # loop timer
-s_end = s[1]
-d_end = [0.0, 0.0, 0.0]
+# s_end = [s[1], 0.0, 0.0]
+# d_end = [0.0, 0.0, 0.0]
 
-x_path = []
-y_path = []
+x_path = np.zeros(1)
+y_path = np.zeros(1)
 
 plt.figure()
 
 while(1):
-    if (i > 0):
-        s_end = long_path.points[-1]  # change end conditions from trajectory
-        d_end = [lat_path.points[-1], 0.0, 0.0]
+    s_end = [s[i+1], 0.0, 0.0]  # desired end conditions
+    d_end = [0.0, 0.0, 0.0]
+
+    print('start condition', s_start, d_start)
+    print('end condition', s_end, d_end)
+    # plt.pause(0.1)
 
     lat_path, long_path = opt_path(s_start, d_start, s_end, d_end)
 
-    # re-assign start and end points
-    s_start = s_end
-    d_start = d_end
+    # re-assign start points
+    s_start = [long_path.points[-1], long_path.first_der(long_path.t), long_path.second_der(long_path.t)]
+    d_start = [lat_path.points[-1], lat_path.first_der(lat_path.t), lat_path.second_der(lat_path.t)]
 
     # update the graph with the (x,y) points from the lat/long trajectory (splined)
     x_fren, y_fren = fren2cart(long_path.points, lat_path.points, wx_new, wy_new, heading, s)
-    x_path.append(x_fren)
-    y_path.append(y_fren)
+    x_path = np.append(x_path, x_fren)
+    y_path = np.append(y_path, y_fren)
 
     i = i + 1  # increase loop counter
     t = t + long_path.t  # loop timer based on the time length of the path planned
 
-    if (np.sqrt((wx_new[:-1]-x_fren)**2 + (wy_new[-1]-y_fren)**2) <= 1):
+    if (np.sqrt((wx_new[-1]-x_fren[-1])**2 + (wy_new[-1]-y_fren[-1])**2) <= 1e-2):
         print('Reached End Goal')
         break
     elif i >= 1e4:
@@ -318,8 +314,10 @@ while(1):
         break
 
     # update graph
-    plt.cla()
-    plt.plot(x_path, y_path)
+    # print(x_path)
+    # print(y_path)
+    plt.plot(x_path, y_path,'k')
+    # plt.plot(wx_new, wy_new,'b')
     plt.grid(True)
-    plt.pause(0.0001)
-    plt.show()
+    plt.pause(0.1)
+    # plt.show()
