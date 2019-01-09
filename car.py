@@ -8,14 +8,14 @@ kt = 0.1  # velocity weight
 kd = 1.0  # ending position weight (lateral)
 ks_d = 1.0  # ending position weight (longitudinal)
 
-radius = 1.0  # robot radius for obstacles
+radius = 2.0  # robot radius for obstacles
 
 sd = 1.0  # desired speed (m/s)
 
 ds_min = -0.1  # min delta speed
 ds_max = 0.1
 d_min = -2.0  # assume center lane with 3 lanes
-d_max = 2.0  # 5 meters max road width
+d_max = 2.0  # meters max road width
 t_min = 1.0  # seconds
 t_max = 2.0
 
@@ -56,11 +56,6 @@ class quartic_poly:
         self.x4 = x_coeff[1]
 
         self.t_pts, self.points = self.calc_all_points(tf)
-
-    def calc_poly(self, tf):
-
-        self.points = np.array([self.calc_point(0.0), self.calc_point(2.0*tf/5.0),
-        self.calc_point(3.0*tf/5.0), self.calc_point(4.0*tf/5.0), self.calc_point(5.0*tf/5.0)])
 
     def calc_point(self, t):
         return self.x0 + self.x1*t + self.x2*t**2 + self.x3*t**3 + self.x4*t**4
@@ -114,10 +109,6 @@ class quintic_poly:
         self.x5 = x_coeff[2]
 
         self.t_pts, self.points = self.calc_all_points(tf)
-
-    def calc_poly(self, tf):
-        self.points = np.array([self.calc_point(0.0), self.calc_point(2.0*tf/5.0),
-        self.calc_point(3.0*tf/5.0), self.calc_point(4.0*tf/5.0), self.calc_point(tf)])
 
     def calc_point(self, t):
         return self.x0 + self.x1*t + self.x2*t**2 + self.x3*t**3 + self.x4*t**4 + self.x5*t**5
@@ -175,30 +166,28 @@ def opt_path(s_start, d_start, s_end, d_end, wx_new, wy_new, heading, arc_len, o
     # longitudinal variation
     for delta_sd in np.linspace(ds_min, ds_max, s_samples):
         for t in np.linspace(t_min, t_max, t_samples):
-            # s_end[0] = s_start[0] + s_start[1]*t + 0.5*s_start[2]*t**2
             new_long = quartic_poly(s_start[0], s_start[1], s_start[2], s_end[0] + delta_sd, 0.0, t)
             new_long.cost = calc_path(new_long, t, 'long')
             long_paths.append(new_long)
 
-    # obstacle, curvature check
+    # obstacle, curvature check, and speed check
     ind = []
     for i in range(len(lat_paths)):
         x, y = fren2cart(long_paths[i].points, lat_paths[i].points, wx_new, wy_new, heading, arc_len)
         if (path_check(x, y, obs) == True):
             ind.append(i)
-            # lat_paths.remove[i]
-            # long_paths.remove[i]
-
-    print(ind)
+        elif (max_curvature(x, y) == True):
+            ind.append(i)
+        # elif (long_paths.first_der(t) > max_speed):
 
     # compare cost
     lat_min = 1e5
     long_min = 1e5
 
     best_lat = lat_paths[0]
-    best_lat.cost = lat_min
+    best_lat.cost = lat_min + 1
     best_long = long_paths[0]
-    best_long.cost = long_min
+    best_long.cost = long_min + 1
 
     for i in range(len(lat_paths)):
         if (i in ind):
@@ -207,7 +196,6 @@ def opt_path(s_start, d_start, s_end, d_end, wx_new, wy_new, heading, arc_len, o
             if (lat_paths[i].cost <= lat_min):
                 lat_min = lat_paths[i].cost
                 best_lat = lat_paths[i]
-                print(i)
 
             if (long_paths[i].cost <= long_min):
                 long_min = long_paths[i].cost
@@ -251,8 +239,8 @@ def obs_detect(x, y, obs):
         if (i == len(x) - 1):
             return False
 
-def max_curvature(fren_path):  # implement for robots without differential drive
-    pass
+def max_curvature(x, y):  # implement for robots without differential drive
+    
 
 def path_check(x, y, obs):
     for i in range(len(x)):
