@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.axes as plt_axis
 from scipy import interpolate
 
 # global parameters
@@ -16,12 +17,12 @@ ds_min = -0.1  # min delta speed
 ds_max = 0.1
 d_min = -2.0  # assume center lane with 3 lanes
 d_max = 2.0  # meters max road width
-t_min = 1.0  # seconds
-t_max = 2.0
+t_min = 4.0  # seconds
+t_max = 5.0
 
-s_samples = 10  # samples within range
-d_samples = 10
-t_samples = 10
+s_samples = 20  # samples within range
+d_samples = 20
+t_samples = 20
 
 # max checks
 max_speed = sd*5
@@ -240,7 +241,7 @@ def obs_detect(x, y, obs):
             return False
 
 def max_curvature(x, y):  # implement for robots without differential drive
-    
+    pass
 
 def path_check(x, y, obs):
     for i in range(len(x)):
@@ -282,7 +283,7 @@ wx_new, wy_new, heading, s = gen_path(wx, wy)
 # plt.show()
 
 c_speed = 0.0  # current speed [m/s]
-c_d = 1.0  # current lateral position [m]
+c_d = 0.0  # current lateral position [m]
 c_d_d = 0.0  # current lateral speed [m/s]
 c_d_dd = 0.0  # current lateral acceleration [m/s^2]
 s0 = 0.0  # current course position
@@ -335,9 +336,11 @@ while(1):
     # print(x_path)
     # print(y_path)
     # plt.cla()
-    plt.plot(x_path, y_path,'b')
+    plt.plot(x_path, y_path,'bo')
     plt.plot(ob[:,0], ob[:,1],'x')
-    # plt.plot(x_fren, y_fren,'k-o')
+    # plt.plot(wx_new, wy_new,'k')
+    plt.xlim(x_path[0] - 5, x_path[-1] + 5)
+    plt.ylim(y_path[0] - 5, y_path[-1] + 5)
     plt.grid(True)
     plt.pause(0.001)
     # plt.show()
